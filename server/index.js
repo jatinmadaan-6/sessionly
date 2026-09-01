@@ -1,0 +1,17 @@
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import { store } from './store.js';
+import { createAgent } from './agent.js';
+const app = express(), agent = createAgent(store); app.use(cors({ origin: process.env.CLIENT_ORIGIN || true })); app.use(express.json());
+app.get('/api/health', (_, res) => res.json({ ok: true, mode: 'demo' }));
+app.get('/api/dashboard', (_, res) => res.json(store.dashboard()));
+app.get('/api/conversations', (_, res) => res.json(store.conversations()));
+app.get('/api/conversations/:clientId', (req, res) => res.json(store.conversation(req.params.clientId)));
+app.post('/api/messages', (req, res) => { const { clientId, text } = req.body; if (!store.client(clientId) || !text?.trim()) return res.status(400).json({ error: 'clientId and text are required' }); res.json(agent.reply(clientId, text.trim())); });
+app.post('/api/bookings/:id/payment-link', (req, res) => { try { res.status(201).json(agent.paymentLink(req.params.id)); } catch (e) { res.status(404).json({ error: e.message }); } });
+app.post('/api/jobs/send-confirmations', (_, res) => { const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0,10); const sent = store.bookings().filter(b => b.status === 'confirmed' && b.startTime.startsWith(tomorrow)).map(b => ({ bookingId: b.id, message: `Reminder: your appointment is tomorrow at ${b.startTime.slice(11,16)}. Reply Yes, Reschedule, or Cancel.` })); res.json({ sent }); });
+app.get('/webhook/whatsapp', (req,res) => req.query['hub.verify_token'] === process.env.WHATSAPP_VERIFY_TOKEN ? res.send(req.query['hub.challenge']) : res.sendStatus(403));
+app.post('/webhook/whatsapp', (req,res) => { const client = store.ensureClient(req.body.from || '+unknown'); const result = agent.reply(client.id, req.body.text || ''); res.status(200).json({ reply: result.content }); });
+app.post('/webhook/razorpay', (req,res) => { const eventId = req.body.eventId; if (!eventId) return res.status(400).json({ error: 'eventId required' }); if (store.paymentByEvent(eventId)) return res.json({ duplicate: true }); store.recordEvent(eventId); res.json({ processed: true }); });
+app.listen(process.env.PORT || 3001, () => console.log(`Sessionly API on :${process.env.PORT || 3001}`));
