@@ -1,38 +1,52 @@
 # Sessionly
 
-An AI-powered scheduling and billing agent for therapy practices. This project demonstrates a safety-bounded agent architecture: language is classified into a small set of intents, while deterministic server tools own all availability, booking, payment, and escalation mutations.
+Sessionly is a safety-bounded scheduling and billing agent for therapy practices. It handles administrative workflows only: appointment availability, booking, rescheduling, cancellation, reminders, payments, and escalation. It never provides medical advice, diagnoses, or clinical support.
 
-## Run locally
+## Production architecture
+
+`WhatsApp/API → signature + idempotency → agent policy → deterministic tools → repository/provider adapters`
+
+- The agent only interprets language and selects a workflow; it cannot write data directly.
+- Six deterministic tools own availability, booking, cancellation, rescheduling, payment-link creation, and therapist escalation.
+- `LocalStore` is free/offline developer mode. Setting `DATABASE_URL` switches the exact same API to `PostgresStore`.
+- Webhooks use HMAC validation when a provider secret is configured, and persist event IDs to prevent duplicate delivery effects.
+- The job handler is transport-independent and can be called by cron locally or a queue worker in deployment.
+
+## Run locally — no accounts required
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The API runs on `http://localhost:3001`.
+Open `http://localhost:5173`. The default storage is `data/sessionly.json`, which is Git-ignored.
 
-The app starts with a demo therapist and clients. Data is stored locally in `data/sessionly.json` and is intentionally ignored by Git. Delete that file to reset the demo.
+## Use free PostgreSQL locally
 
-## What to demo
+```bash
+docker compose up -d
+copy .env.example .env
+npm run migrate
+npm run dev
+```
 
-- Send “I need an appointment Friday evening” and select a shown time.
-- Send “cancel my appointment” or “reschedule my appointment to 2026-09-10 at 17:00”.
-- Send “I feel hopeless” to demonstrate the medical/safety guardrail and therapist escalation.
-- Open the Billing tab and generate a payment link for a completed booking.
-- Call `POST /webhook/whatsapp` with `{ "from": "+15551234567", "text": "book Friday" }` to emulate WhatsApp ingestion.
+The included Docker database is local-only. For hosted development, a free Supabase or Neon database works by setting `DATABASE_URL`; no code changes are needed.
 
-## Architecture
+## Test and build
 
-`HTTP / WhatsApp webhook → conversation state → intent policy → backend tool → storage / adapter → reply`
+```bash
+npm test
+npm run build
+```
 
-The tool layer exposes availability, booking, cancellation, rescheduling, payment-link creation, and therapist escalation. The included `CalendarGateway`, `PaymentGateway`, and `Messenger` use demo implementations so the project works without credentials; their interfaces isolate Google Calendar, Razorpay, and WhatsApp integrations for production.
+Tests exercise booking state, duplicate slot prevention, rescheduling, cancellation, payment links, safety escalation, API input validation, signed WhatsApp webhooks, and webhook idempotency.
 
-## API
+## Optional providers
 
-- `GET /api/dashboard`
-- `GET /api/conversations`, `GET /api/conversations/:clientId`
-- `POST /api/messages` — `{ clientId, text }`
-- `POST /api/bookings/:id/payment-link`
-- `POST /api/jobs/send-confirmations`
-- `GET|POST /webhook/whatsapp`
-- `POST /webhook/razorpay` 
+The app works without credentials. Add provider secrets only when connecting a real account:
+
+- `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` — Cloud API verification and signed webhook payloads
+- `RAZORPAY_WEBHOOK_SECRET` — signed payment events
+- `DATABASE_URL` — PostgreSQL persistence
+
+Provider-specific adapters are deliberately ports, so credentials and side effects stay outside agent policy. Never commit `.env`.
